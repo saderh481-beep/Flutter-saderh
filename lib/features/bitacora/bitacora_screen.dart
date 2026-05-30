@@ -3,10 +3,14 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:dio/dio.dart';
 
 import '../../core/api/api_service.dart';
 import '../../core/auth/auth_provider.dart';
@@ -31,6 +35,9 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
   bool _isSaving = false;
   bool _isOffline = false;
   String? _uploadStatus;
+  bool _isLoadingMore = false;
+  bool _isFormValid = false;
+  double _progressValue = 0.0;
 
   bool _huboIncidente = false;
   String? _tipoIncidente;
@@ -51,22 +58,60 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
 
   final _scrollKey = GlobalKey<ScaffoldState>();
   final _formScrollController = ScrollController();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final extra = GoRouterState.of(context).extra as Map<String, dynamic>?;
-      if (extra != null) {
-        setState(() {
-          _beneficiario = extra['beneficiario'] as Beneficiario?;
-          _lat = extra['lat'] as double?;
-          _lng = extra['lng'] as double?;
-          if (_lat != null && _lng != null) {
-            _coordInicio = '($_lat,$_lng)';
-          }
+  
+  final Connectivity _connectivity = Connectivity();
+  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
+}
         });
       }
+    });
+    
+    _checkConnectivity();
+    _setupValidationListeners();
+  }
+
+  void _setupValidationListeners() {
+    _observacionesController.addListener(_validateForm);
+    // Add listeners to other important fields if needed
+  }
+
+  void _validateForm() {
+    final isValid = _observacionesController.text.trim().isNotEmpty;
+    if (isValid != _isFormValid) {
+      setState(() => _isFormValid = isValid);
+    }
+  }
+
+  Future<void> _refreshForm() async {
+    // Reset form to initial state
+    setState(() {
+      _huboIncidente = false;
+      _tipoIncidente = null;
+      _incidenteController.clear();
+      _observacionesController.clear();
+      _recomendacionesController.clear();
+      _comentariosController.clear();
+      _fotosCampo.clear();
+      _calidadServicio = 3;
+      _coordinacion = 3;
+      _atencion = 3;
+      _fotoRostro = null;
+      _isFormValid = false;
+    });
+  }
+
+  void _checkConnectivity() {
+    _connectivitySubscription = _connectivity.onConnectivityChanged.listen((result) {
+      setState(() {
+        _isOffline = result.contains(ConnectivityResult.none);
+      });
+    });
+    
+    // Initial check
+    _connectivity.checkConnectivity().then((result) {
+      setState(() {
+        _isOffline = result.contains(ConnectivityResult.none);
+      });
     });
   }
 
@@ -77,6 +122,7 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
     _recomendacionesController.dispose();
     _comentariosController.dispose();
     _formScrollController.dispose();
+    _connectivitySubscription?.cancel();
     super.dispose();
   }
 
@@ -153,10 +199,19 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
 
     setState(() {
       _isSaving = true;
-      _uploadStatus = 'Guardando bitacora...';
+      _uploadStatus = 'Validando información...';
+      _progressValue = 0.1;
     });
 
     try {
+      // Simulate validation progress
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted) return;
+      setState(() {
+        _uploadStatus = 'Preparando datos...';
+        _progressValue = 0.3;
+      });
+
       final firmaBytes = await _signatureKey.currentState?.getBytes();
       String? firmaDataUri;
       File? firmaFile;
@@ -166,6 +221,12 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
         firmaFile = File('${backupDir.path}/firma_temp_${DateTime.now().millisecondsSinceEpoch}.png');
         await firmaFile.writeAsBytes(firmaBytes);
       }
+
+      if (!mounted) return;
+      setState(() {
+        _uploadStatus = 'Procesando fotos...';
+        _progressValue = 0.5;
+      });
 
       String? rostroDataUri;
       if (_fotoRostro != null) {
@@ -178,6 +239,22 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
         if (uri != null) fotosCampoDataUris.add(uri);
       }
 
+      if (!mounted) return;
+      setState(() {
+        _uploadStatus = 'Generando ID único...';
+        _progressValue = 0.7;
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _uploadStatus = "Obteniendo ubicación actual...";
+        _progressValue = 0.75;
+      });
+      if (!mounted) return;
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      final coordFin = "(${position.latitude},${position.longitude})";
+      final fechaFin = DateTime.now().toUtc().toIso8601String();
+
       final syncId = const Uuid().v4();
 
       final bitacora = Bitacora(
@@ -185,6 +262,8 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
         beneficiarioId: _beneficiario?.id,
         fechaInicio: DateTime.now().toUtc().toIso8601String(),
         coordInicio: _coordInicio,
+        coordFin: coordFin,
+        fechaFin: fechaFin,
         actividadesDesc: _observacionesController.text.trim(),
         recomendaciones: _recomendacionesController.text.trim().isEmpty
             ? null
@@ -204,6 +283,12 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
       final fotoPaths = _fotosCampo.map((f) => f.path).toList();
 
       if (_isOffline) {
+        if (!mounted) return;
+        setState(() {
+          _uploadStatus = 'Guardando localmente...';
+          _progressValue = 0.9;
+        });
+
         await HiveService.enqueue({
           'operacion': 'crear_bitacora',
           'timestamp': DateTime.now().toUtc().toIso8601String(),
@@ -219,6 +304,13 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
         );
 
         if (!mounted) return;
+        setState(() {
+          _uploadStatus = 'Guardado completado';
+          _progressValue = 1.0;
+        });
+
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (!mounted) return;
         context.go('/bitacora-success', extra: {'offline': true});
         return;
       }
@@ -226,13 +318,13 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
       final api = ApiService(ref.read(authProvider.notifier));
 
       if (!mounted) return;
-      setState(() => _uploadStatus = 'Enviando bitacora al servidor...');
+      setState(() => _uploadStatus = 'Conectando al servidor...');
 
       final response = await api.crearBitacora(bitacora.toBody());
       final bitacoraId = response['id']?.toString();
 
       if (bitacoraId == null) {
-        throw Exception('No se recibio ID de bitacora');
+        throw SaderhException('No se recibió ID de bitácora del servidor');
       }
 
       if (!mounted) return;
@@ -247,23 +339,101 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
       );
 
       if (!mounted) return;
-      setState(() => _uploadStatus = 'Bitacora registrada correctamente');
+      setState(() => _uploadStatus = 'Bitácora registrada correctamente');
 
       await NotificationService.showBitacoraSuccess(
-        beneficiario: _beneficiario?.nombre ?? 'Bitacora',
+        beneficiario: _beneficiario?.nombre ?? 'Bitácora',
       );
 
       if (!mounted) return;
       context.go('/bitacora-success', extra: {'offline': false});
-    } catch (e) {
+    } on SaderhException catch (e) {
       if (!mounted) return;
+      
+      // Show specific error message based on exception type
+      String errorMessage;
+      if (e is NoInternetException) {
+        errorMessage = 'No hay conexión a internet. La bitácora se guardará localmente.';
+      } else if (e is TimeoutException) {
+        errorMessage = 'Tiempo de espera agotado. Verifique su conexión e intente nuevamente.';
+      } else if (e is AuthException) {
+        errorMessage = 'Error de autenticación. Por favor, inicie sesión nuevamente.';
+      } else if (e is ServerException) {
+        errorMessage = 'Error del servidor. Intente nuevamente en unos minutos.';
+      } else {
+        errorMessage = e.message;
+      }
 
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: AppColors.danger,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      // Still save offline as fallback
       final syncId = const Uuid().v4();
       final bitacora = Bitacora(
         tipo: 'beneficiario',
         beneficiarioId: _beneficiario?.id,
         fechaInicio: DateTime.now().toUtc().toIso8601String(),
         coordInicio: _coordInicio,
+        coordFin: coordFin,
+        fechaFin: fechaFin,
+        actividadesDesc: _observacionesController.text.trim(),
+        recomendaciones: _recomendacionesController.text.trim().isEmpty
+            ? null
+            : _recomendacionesController.text.trim(),
+        comentariosBeneficiario: _comentariosController.text.trim().isEmpty
+            ? null
+            : _comentariosController.text.trim(),
+        calificacion: _calidadServicio,
+        estado: 'cerrada',
+        creadaOffline: true,
+        syncId: syncId,
+      );
+
+      final fotoPaths = _fotosCampo.map((f) => f.path).toList();
+      await HiveService.enqueue({
+        'operacion': 'crear_bitacora',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'payload': bitacora.toBody(),
+      });
+
+      await _saveBitacoraBackup(
+        bitacoraId: syncId,
+        data: bitacora.toBody(),
+        fotoPaths: fotoPaths,
+        rostroPath: _fotoRostro?.path,
+        firmaPath: null,
+      );
+
+      if (!mounted) return;
+      context.go('/bitacora-success', extra: {'offline': true});
+    } catch (e) {
+      if (!mounted) return;
+      
+      // Handle any other unexpected errors
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error inesperado: ${e.toString()}'),
+          backgroundColor: AppColors.danger,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      // Still save offline as fallback
+      final syncId = const Uuid().v4();
+      final bitacora = Bitacora(
+        tipo: 'beneficiario',
+        beneficiarioId: _beneficiario?.id,
+        fechaInicio: DateTime.now().toUtc().toIso8601String(),
+        coordInicio: _coordInicio,
+        coordFin: coordFin,
+        fechaFin: fechaFin,
         actividadesDesc: _observacionesController.text.trim(),
         recomendaciones: _recomendacionesController.text.trim().isEmpty
             ? null
@@ -295,7 +465,12 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
       if (!mounted) return;
       context.go('/bitacora-success', extra: {'offline': true});
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _progressValue = 0.0;
+        });
+      }
     }
   }
 
@@ -310,15 +485,17 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
       backgroundColor: const Color(0xFFF8F9FB),
       appBar: AppBar(
         backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF1A1A2E),
-        elevation: 0,
+        elevation: 2,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new, size: 20),
           onPressed: _isSaving ? null : () => context.go('/dashboard'),
         ),
         title: Text(
           nombre,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16, color: Color(0xFF1A1A2E)),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -345,100 +522,120 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
             ),
         ],
       ),
-      body: _isSaving
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(
-                    color: AppColors.guinda,
-                    strokeWidth: 3,
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    _uploadStatus ?? 'Guardando...',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.guinda,
+      body: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (notification is ScrollEndNotification &&
+              notification.metrics.pixels == notification.metrics.maxScrollExtent &&
+              !_isLoadingMore) {
+            // Load more photos if needed (for future enhancement)
+          }
+          return false;
+        },
+        child: _isSaving
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SizedBox(
+                      width: 250,
+                      child: LinearProgressIndicator(
+                        value: _progressValue,
+                        backgroundColor: AppColors.guinda.withValues(alpha: 0.2),
+                        valueColor: const AlwaysStoppedAnimation<Color>(AppColors.guinda),
+                        minHeight: 4,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'No cierres la aplicacion',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[500],
+                    const SizedBox(height: 16),
+                    Text(
+                      _uploadStatus ?? 'Guardando...',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.guinda,
+                      ),
                     ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'No cierres la aplicación mientras se guarda la bitácora',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : RefreshIndicator(
+                onRefresh: _refreshForm,
+                child: SingleChildScrollView(
+                  controller: _formScrollController,
+                  padding: const EdgeInsets.all(20),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSection('Incidente', Icons.warning_amber, _buildIncidenteSection()),
+                      const SizedBox(height: 20),
+                      _buildSection('Observaciones', Icons.edit_note, _buildObservacionesSection()),
+                      const SizedBox(height: 20),
+                      _buildSection('Evidencias fotográficas', Icons.camera_alt, _buildEvidenciasSection()),
+                      const SizedBox(height: 20),
+                      _buildSection('Evaluación del servicio', Icons.star, _buildEvaluacionSection()),
+                      const SizedBox(height: 20),
+                      _buildSection('Validación de identidad', Icons.verified_user, _buildValidacionSection()),
+                      const SizedBox(height: 32),
+                      _buildSaveButton(),
+                      const SizedBox(height: 24),
+                    ],
                   ),
-                ],
+                ),
               ),
-            )
-          : SingleChildScrollView(
-              controller: _formScrollController,
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildSection('Incidente', Icons.warning_amber, _buildIncidenteSection()),
-                  const SizedBox(height: 12),
-                  _buildSection('Observaciones', Icons.edit_note, _buildObservacionesSection()),
-                  const SizedBox(height: 12),
-                  _buildSection('Evidencias fotograficas', Icons.camera_alt, _buildEvidenciasSection()),
-                  const SizedBox(height: 12),
-                  _buildSection('Evaluacion del servicio', Icons.star, _buildEvaluacionSection()),
-                  const SizedBox(height: 12),
-                  _buildSection('Validacion de identidad', Icons.verified_user, _buildValidacionSection()),
-                  const SizedBox(height: 24),
-                  _buildSaveButton(),
-                  const SizedBox(height: 16),
-                ],
-              ),
-            ),
     );
   }
 
   Widget _buildSection(String title, IconData icon, Widget content) {
     return Container(
+      margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 1),
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(6),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: AppColors.guinda.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(8),
+                    color: AppColors.guinda.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(icon, color: AppColors.guinda, size: 18),
+                  child: Icon(icon, color: AppColors.guinda, size: 20),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Text(
                   title,
                   style: const TextStyle(
-                    fontSize: 15,
+                    fontSize: 16,
                     fontWeight: FontWeight.w600,
                     color: Color(0xFF1A1A2E),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             content,
           ],
         ),
@@ -450,46 +647,86 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '¿Hubo algun incidente durante la visita?',
-          style: TextStyle(color: Colors.grey[600], fontSize: 13),
+        const Text(
+          '¿Hubo algún incidente durante la visita?',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey[700]),
         ),
-        const SizedBox(height: 10),
-        SegmentedButton<bool>(
-          segments: const [
-            ButtonSegment(value: false, label: Text('No'), icon: Icon(Icons.check_circle_outline, size: 18)),
-            ButtonSegment(value: true, label: Text('Si'), icon: Icon(Icons.warning_amber, size: 18)),
+        const SizedBox(height: 12),
+        ToggleButtons(
+          borderRadius: BorderRadius.circular(12),
+          selectedBorderColor: AppColors.guinda,
+          selectedColor: Colors.white,
+          fillColor: AppColors.guinda.withValues(alpha: 0.1),
+          color: Colors.grey[600]!,
+          splashColor: AppColors.guinda.withValues(alpha: 0.1),
+          highlightColor: AppColors.guinda.withValues(alpha: 0.05),
+          isSelected: [_huboIncidente == false, _huboIncidente == true],
+          onPressed: (index) {
+            setState(() {
+              _huboIncidente = index == 1;
+              if (!_huboIncidente) {
+                _tipoIncidente = null;
+                _incidenteController.clear();
+              }
+            });
+          },
+          children: const [
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.check_circle_outline, size: 20),
+                  SizedBox(width: 8),
+                  Text('No', style: TextStyle(fontSize: 14)),
+                ],
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.warning_amber, size: 20),
+                  SizedBox(width: 8),
+                  Text('Sí', style: TextStyle(fontSize: 14)),
+                ],
+              ),
+            ),
           ],
-          selected: {_huboIncidente},
-          onSelectionChanged: (v) => setState(() => _huboIncidente = v.first),
         ),
         if (_huboIncidente) ...[
+          const SizedBox(height: 16),
+          _buildTextField(
+            label: 'Tipo de incidente',
+            hint: 'Seleccione el tipo',
+            prefixIcon: Icons.category,
+          ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
-            initialValue: _tipoIncidente,
+            value: _tipoIncidente,
             decoration: InputDecoration(
-              labelText: 'Tipo de incidente',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               filled: true,
-              fillColor: const Color(0xFFF8F9FB),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              prefixIcon: Icon(Icons.category, color: Colors.grey[400]),
             ),
             items: ['Accidente', 'Conflicto', 'Daño material', 'Otro']
-                .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+                .map((e) => DropdownMenuItem(
+                      value: e,
+                      child: Text(e, style: const TextStyle(fontSize: 14)),
+                    ))
                 .toList(),
             onChanged: (v) => setState(() => _tipoIncidente = v),
           ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _incidenteController,
+          const SizedBox(height: 16),
+          _buildTextField(
+            label: 'Descripción del incidente',
+            hint: 'Describa lo que sucedió',
+            prefixIcon: Icons.description,
             maxLines: 3,
-            decoration: InputDecoration(
-              labelText: 'Descripcion del incidente',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              filled: true,
-              fillColor: const Color(0xFFF8F9FB),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
+            controller: _incidenteController,
           ),
         ],
       ],
@@ -500,41 +737,23 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
-          controller: _observacionesController,
+        _buildTextField(
+          label: 'Observaciones de la visita *',
+          hint: 'Describe el resultado de la visita técnica...',
           maxLines: 5,
-          decoration: InputDecoration(
-            labelText: 'Observaciones de la visita *',
-            hintText: 'Describe el resultado de la visita tecnica...',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            filled: true,
-            fillColor: const Color(0xFFF8F9FB),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          ),
+          controller: _observacionesController,
         ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _recomendacionesController,
+        const SizedBox(height: 16),
+        _buildTextField(
+          label: 'Recomendaciones',
           maxLines: 3,
-          decoration: InputDecoration(
-            labelText: 'Recomendaciones',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            filled: true,
-            fillColor: const Color(0xFFF8F9FB),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          ),
+          controller: _recomendacionesController,
         ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _comentariosController,
+        const SizedBox(height: 16),
+        _buildTextField(
+          label: 'Comentarios del beneficiario',
           maxLines: 2,
-          decoration: InputDecoration(
-            labelText: 'Comentarios del beneficiario',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            filled: true,
-            fillColor: const Color(0xFFF8F9FB),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          ),
+          controller: _comentariosController,
         ),
       ],
     );
@@ -544,41 +763,42 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Fotos de campo (${_fotosCampo.length}/10)',
-          style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+        _buildTextField(
+          label: 'Fotos de campo',
+          hint: '${_fotosCampo.length}/10 fotos',
+          prefixIcon: Icons.image,
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         if (_fotosCampo.isNotEmpty)
           SizedBox(
-            height: 90,
+            height: 100,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _fotosCampo.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
               itemBuilder: (_, i) => Stack(
                 children: [
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(16),
                     child: Image.file(
                       File(_fotosCampo[i].path),
-                      width: 90,
-                      height: 90,
+                      width: 100,
+                      height: 100,
                       fit: BoxFit.cover,
                     ),
                   ),
                   Positioned(
-                    top: 4,
-                    right: 4,
+                    top: 8,
+                    right: 8,
                     child: GestureDetector(
                       onTap: () => setState(() => _fotosCampo.removeAt(i)),
                       child: Container(
-                        padding: const EdgeInsets.all(3),
+                        padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
                           color: Colors.black54,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.close, color: Colors.white, size: 14),
+                        child: const Icon(Icons.close, color: Colors.white, size: 16),
                       ),
                     ),
                   ),
@@ -586,29 +806,29 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
               ),
             ),
           ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 16),
         Row(
           children: [
             Expanded(
               child: OutlinedButton.icon(
                 onPressed: _fotosCampo.length >= 10 ? null : () => _addFoto(ImageSource.camera),
-                icon: const Icon(Icons.camera_alt, size: 16),
-                label: const Text('Camara', style: TextStyle(fontSize: 12)),
+                icon: const Icon(Icons.camera_alt, size: 18),
+                label: const Text('Tomar foto', style: TextStyle(fontSize: 14)),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             Expanded(
               child: OutlinedButton.icon(
                 onPressed: _fotosCampo.length >= 10 ? null : () => _addFoto(ImageSource.gallery),
-                icon: const Icon(Icons.photo_library, size: 16),
-                label: const Text('Galeria', style: TextStyle(fontSize: 12)),
+                icon: const Icon(Icons.photo_library, size: 18),
+                label: const Text('Seleccionar foto', style: TextStyle(fontSize: 14)),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
             ),
@@ -641,41 +861,62 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
   Widget _buildEvaluacionSection() {
     return Column(
       children: [
-        _starRating('Calidad del servicio', _calidadServicio, (v) => setState(() => _calidadServicio = v)),
-        const Divider(height: 28),
-        _starRating('Coordinacion', _coordinacion, (v) => setState(() => _coordinacion = v)),
-        const Divider(height: 28),
-        _starRating('Atencion', _atencion, (v) => setState(() => _atencion = v)),
+        _buildRatingRow('Calidad del servicio', _calidadServicio, (v) => setState(() => _calidadServicio = v)),
+        const SizedBox(height: 24),
+        _buildRatingRow('Coordinación', _coordinacion, (v) => setState(() => _coordinacion = v)),
+        const SizedBox(height: 24),
+        _buildRatingRow('Atención', _atencion, (v) => setState(() => _atencion = v)),
       ],
     );
   }
 
-  Widget _starRating(String label, int value, ValueChanged<int> onChanged) {
+  Widget _buildRatingRow(String label, int value, ValueChanged<int> onChanged) {
     return Row(
       children: [
         Expanded(
-          child: Text(label, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey[700]),
+          ),
         ),
         Row(
-          children: List.generate(5, (i) {
-            final filled = i < value;
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(5, (index) {
+            final isActive = index < value;
             return GestureDetector(
-              onTap: () => onChanged(i + 1),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2),
+              onTap: () => onChanged(index + 1),
+              child: Container(
+                width: 24,
+                height: 24,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: isActive ? AppColors.guinda : Colors.grey[200],
+                  borderRadius: BorderRadius.circular(4),
+                ),
                 child: Icon(
-                  filled ? Icons.star : Icons.star_border,
-                  color: filled ? const Color(0xFFFFB800) : Colors.grey[300],
-                  size: 26,
+                  Icons.star,
+                  size: 16,
+                  color: isActive ? Colors.white : Colors.grey[600],
                 ),
               ),
             );
           }),
         ),
-        const SizedBox(width: 6),
-        SizedBox(
-          width: 20,
-          child: Text('$value', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF1A1A2E))),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.grey[100],
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            '$value/5',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[700],
+            ),
+          ),
         ),
       ],
     );
@@ -687,21 +928,18 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Foto del rostro del beneficiario',
-          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
+        _buildTextField(
+          label: 'Foto del rostro del beneficiario',
+          hint: 'Requerida para validar identidad',
+          prefixIcon: Icons.face,
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 16),
         _buildPhotoPreview(
           foto: _fotoRostro,
-          placeholder: 'Foto de rostro',
-          placeholderIcon: Icons.face,
           onTake: () => _tomarRostro(ImageSource.camera),
           onGallery: () => _tomarRostro(ImageSource.gallery),
         ),
-        const SizedBox(height: 16),
-        const Divider(),
-        const SizedBox(height: 12),
+        const SizedBox(height: 24),
         SignatureWidget(
           key: _signatureKey,
           enabled: rostroTomada,
@@ -709,10 +947,10 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
         ),
         if (!rostroTomada)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.only(top: 12),
             child: Text(
               'Toma la foto del rostro primero para habilitar la firma',
-              style: TextStyle(color: Colors.grey[500], fontSize: 11),
+              style: TextStyle(color: Colors.grey[500], fontSize: 12),
             ),
           ),
       ],
@@ -804,24 +1042,69 @@ class _BitacoraScreenState extends ConsumerState<BitacoraScreen> {
     );
   }
 
+  Widget _buildTextField({
+    required String label,
+    String? hint,
+    IconData? prefixIcon,
+    int maxLines = 1,
+    TextEditingController? controller,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          maxLines: maxLines,
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: TextStyle(color: Colors.grey[400]),
+            prefixIcon: prefixIcon != null ? Icon(prefixIcon, color: Colors.grey[400]) : null,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[200]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[200]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppColors.guinda, width: 2),
+            ),
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          ),
+          style: const TextStyle(fontSize: 14),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSaveButton() {
     return SizedBox(
       width: double.infinity,
       height: 48,
       child: ElevatedButton.icon(
-        onPressed: _isSaving ? null : _save,
+        onPressed: (_isSaving || !_isFormValid) ? null : _save,
         icon: _isSaving
-            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-            : const Icon(Icons.save_as, size: 18),
+            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+            : const Icon(Icons.save_as, size: 20),
         label: Text(
-          _isSaving ? 'Guardando...' : 'Guardar bitacora',
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          _isSaving ? 'Guardando...' : 'Guardar bitácora',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.guinda,
           foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           elevation: 0,
+          disabledBackgroundColor: AppColors.guinda.withValues(alpha: 0.3),
         ),
       ),
     );

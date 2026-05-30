@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../auth/auth_provider.dart';
 import 'dio_client.dart';
 import 'api_endpoints.dart';
+import '../../core/exceptions/app_exceptions.dart';
 
 class ApiService {
   late final DioClient _client;
@@ -62,8 +63,7 @@ class ApiService {
       }
       return [];
     } on DioException catch (e) {
-      _handleAuthError(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -92,8 +92,7 @@ class ApiService {
       final data = response.data as Map<String, dynamic>;
       return data['data'] as Map<String, dynamic>? ?? data;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -102,8 +101,7 @@ class ApiService {
       final response = await dio.get(ApiEndpoints.beneficiarioPorId(id));
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -124,8 +122,7 @@ class ApiService {
       }
       return [];
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      return [];
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -143,8 +140,7 @@ class ApiService {
       }
       return {};
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -157,8 +153,7 @@ class ApiService {
       if (data is List) return data.cast<Map<String, dynamic>>();
       return [];
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      return [];
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -172,8 +167,7 @@ class ApiService {
       if (data is List) return data.cast<Map<String, dynamic>>();
       return [];
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      return [];
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -195,8 +189,7 @@ class ApiService {
       if (data is List) return data.cast<Map<String, dynamic>>();
       return [];
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      return [];
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -205,8 +198,7 @@ class ApiService {
       final response = await dio.get(ApiEndpoints.bitacoraPorId(id));
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -217,8 +209,7 @@ class ApiService {
       if (data is List) return data.cast<Map<String, dynamic>>();
       return [];
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      return [];
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -229,8 +220,7 @@ class ApiService {
       if (data is List) return data.cast<Map<String, dynamic>>();
       return [];
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      return [];
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -239,8 +229,7 @@ class ApiService {
       final response = await dio.post(ApiEndpoints.bitacoras, data: data);
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -255,8 +244,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -271,8 +259,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -280,8 +267,7 @@ class ApiService {
     try {
       await dio.delete(ApiEndpoints.bitacoraPorId(id));
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -290,8 +276,8 @@ class ApiService {
       final response = await dio.get(ApiEndpoints.bitacorasContador);
       final data = response.data as Map<String, dynamic>;
       return data['pendientes'] as int? ?? 0;
-    } catch (_) {
-      return 0;
+    } on DioException catch (e) {
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -337,8 +323,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -354,8 +339,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -370,8 +354,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -386,8 +369,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -396,8 +378,8 @@ class ApiService {
     try {
       final response = await dio.get(ApiEndpoints.fotoRostroQuery(bitacoraId));
       return (response.data as Map<String, dynamic>)['url'] as String?;
-    } catch (_) {
-      return null;
+    } on DioException catch (e) {
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -405,8 +387,8 @@ class ApiService {
     try {
       final response = await dio.get(ApiEndpoints.firmaQuery(bitacoraId));
       return (response.data as Map<String, dynamic>)['url'] as String?;
-    } catch (_) {
-      return null;
+    } on DioException catch (e) {
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -416,8 +398,8 @@ class ApiService {
       return ((response.data as Map<String, dynamic>)['urls'] as List<dynamic>?)
               ?.cast<String>() ??
           [];
-    } catch (_) {
-      return [];
+    } on DioException catch (e) {
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -431,8 +413,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -460,8 +441,8 @@ class ApiService {
 
       final response = await filesApiDio.post(endpoint, data: formData);
       return response.data as Map<String, dynamic>;
-    } catch (e) {
-      rethrow;
+    } on DioException catch (e) {
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -477,8 +458,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -492,8 +472,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -507,8 +486,7 @@ class ApiService {
       );
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -516,8 +494,8 @@ class ApiService {
     try {
       final response = await dio.get(ApiEndpoints.syncDebug);
       return response.data as Map<String, dynamic>;
-    } catch (_) {
-      return {};
+    } on DioException catch (e) {
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -530,8 +508,7 @@ class ApiService {
       if (data is List) return data.cast<Map<String, dynamic>>();
       return [];
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      return [];
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -539,7 +516,7 @@ class ApiService {
     try {
       await dio.patch(ApiEndpoints.notificacionLeer(id));
     } on DioException catch (e) {
-      _throwIfCritical(e);
+      throw ExceptionHandler.handleException(e);
     }
   }
 
@@ -560,54 +537,15 @@ class ApiService {
       final response = await dio.post(endpoint, data: formData);
       return response.data as Map<String, dynamic>;
     } on DioException catch (e) {
-      _throwIfCritical(e);
-      rethrow;
+      throw ExceptionHandler.handleException(e);
     }
   }
 
   void _handleAuthError(DioException e) {
-    if (e.response != null) {
-      final data = e.response!.data;
-      String message = 'Error del servidor';
-      if (data is Map<String, dynamic>) {
-        message = (data['message'] as String?) ??
-                  (data['error'] as String?) ??
-                  message;
-        if (message == 'usuario_inactivo') {
-          throw ApiException('Usuario inactivo. Contacta a tu coordinador.');
-        }
-        if (message == 'periodo_vencido') {
-          throw ApiException('Período de trabajo vencido. Contacta a tu coordinador.');
-        }
-      }
-      throw ApiException(message);
-    }
-    if (e.type == DioExceptionType.connectionTimeout ||
-        e.type == DioExceptionType.connectionError) {
-      throw ApiException('Sin conexion a internet');
-    }
-    throw ApiException('Error de conexion');
-  }
-
-  void _throwIfCritical(DioException e) {
-    if (e.response?.statusCode == 401) {
+    final exception = ExceptionHandler.handleException(e);
+    if (exception is AuthException) {
       _authProvider.logout();
-      throw ApiException('Sesion expirada. Inicia sesion nuevamente.');
     }
-    if (e.response?.statusCode != null && e.response!.statusCode! >= 500) {
-      throw ApiException('Error del servidor, intenta mas tarde');
-    }
-    if (e.type == DioExceptionType.connectionTimeout ||
-        e.type == DioExceptionType.connectionError) {
-      throw ApiException('Sin conexion a internet');
-    }
+    throw exception;
   }
-}
-
-class ApiException implements Exception {
-  final String message;
-  ApiException(this.message);
-
-  @override
-  String toString() => message;
 }
